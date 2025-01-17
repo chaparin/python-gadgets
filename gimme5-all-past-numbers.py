@@ -1,53 +1,85 @@
-import requests
-from bs4 import BeautifulSoup
+from selenium import webdriver
+from selenium.webdriver.common.by import By
+from selenium.webdriver.support.ui import WebDriverWait
+from selenium.webdriver.support import expected_conditions as EC
+from selenium.common.exceptions import TimeoutException
 import json
 import os
 from datetime import datetime
+import re
+import time
+import random
 
-LOTTERY_LAUNCH_DATE = datetime(2013, 5, 12)  # Assuming Gimme 5 also started on this date
+LOTTERY_LAUNCH_DATE = datetime(2013, 5, 12)
 DATA_FILE = "gimme5_data.json"
 
-
 def fetch_lottery_data(url):
-    """Fetches Gimme 5 lottery data from the given URL."""
-    try:
-        response = requests.get(url)
-        response.raise_for_status()
-        return response.text
-    except requests.exceptions.RequestException as e:
-        print(f"Error fetching data: {e}")
-        return None
+    """Fetches Gimme 5 lottery data from the given URL using Selenium."""
+    user_agents = [
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36",
+        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.1 Safari/605.1.15",
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:91.0) Gecko/20100101 Firefox/91.0"
+        # ... add more user-agents
+    ]
 
+    options = webdriver.ChromeOptions()
+    options.add_argument("--headless")
+    options.add_argument(f"user-agent={random.choice(user_agents)}")
+    driver = webdriver.Chrome(options=options)
+
+    try:
+        driver.get(url)
+        time.sleep(random.uniform(5, 15))  # Longer initial delay
+        print(driver.page_source)  # Print HTML for debugging
+
+        # Scroll the page
+        driver.execute_script("window.scrollTo(0, document.body.scrollHeight);")
+        time.sleep(random.uniform(3, 7))
+
+        WebDriverWait(driver, 30).until(
+            EC.presence_of_element_located((By.TAG_NAME, "pre"))
+        )
+        return driver.page_source
+    except TimeoutException:
+        print("Timeout waiting for page to load.")
+        return None
+    finally:
+        driver.quit()
 
 def parse_lottery_data(html):
-    """Parses the Gimme 5 lottery data from HTML."""
-    soup = BeautifulSoup(html, "html.parser")
-    draws_container = soup.find("div", class_="draws-container")
+    """Parses the Gimme 5 lottery data from the <pre> tag."""
+    from bs4 import BeautifulSoup
 
-    if not draws_container:
-        print("Could not find the Gimme 5 draws container.")
+    soup = BeautifulSoup(html, "html.parser")
+    pre_tag = soup.find("pre")
+
+    if not pre_tag:
+        print("Could not find the <pre> tag containing lottery data.")
         return []
 
     data = []
-    for draw in draws_container.find_all("div", class_="single-draw"):
-        date_str = draw.find("div", class_="date").text.strip()
 
-        try:
-            date = datetime.strptime(date_str, "%d %b %Y")
-            if date >= LOTTERY_LAUNCH_DATE:
-                numbers = []
-                for ball in draw.find_all("span", class_="ball"):
-                    numbers.append(int(ball.text.strip()))
+    text = pre_tag.text
+    lines = text.strip().split('\n')
 
-                data.append({
-                    "date": date.strftime("%Y-%m-%d"),  # Format date to YYYY-MM-DD
-                    "numbers": numbers,
-                })
-        except ValueError:
-            print(f"Error parsing date: {date_str}")
+    for line in lines:
+        # Use a regular expression to extract date and numbers
+        match = re.search(r'(\d{1,2}/\d{1,2}/\d{2})\s+([A-Z]{3})\s+(\d+)\s+(\d+)\s+(\d+)\s+(\d+)\s+(\d+)', line)
+        if match:
+            date_str = match.group(1)
+            numbers = [int(match.group(i)) for i in range(3, 8)]
+
+            try:
+                date = datetime.strptime(date_str, "%m/%d/%y")
+                if date >= LOTTERY_LAUNCH_DATE:
+                    data.append({
+                        "date": date.strftime("%Y-%m-%d"),
+                        "numbers": numbers,
+                    })
+            except ValueError:
+                print(f"Error parsing date: {date_str}")
 
     return data
-
 
 def load_existing_data():
     """Loads existing Gimme 5 lottery data from the JSON file."""
@@ -60,12 +92,10 @@ def load_existing_data():
                 return []
     return []
 
-
 def save_data(data):
     """Saves the Gimme 5 lottery data to the JSON file."""
     with open(DATA_FILE, "w") as f:
         json.dump(data, f, indent=4)
-
 
 def update_lottery_data(url):
     """Fetches, parses, and updates Gimme 5 lottery data, saving only new entries."""
@@ -99,8 +129,7 @@ def update_lottery_data(url):
     else:
         print("No new data found.")
 
-
 if __name__ == "__main__":
-    # CORRECT URL FOR GIMME 5
-    url = "https://www.mainelottery.com/games/gimme5-previous.html"
+    # Correct URL for all Gimme 5 results
+    url = "https://www.mainelottery.com/cgi/all.results.pl"
     update_lottery_data(url)
